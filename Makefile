@@ -1,4 +1,4 @@
-obj-$(CONFIG_SENSORS_APPLESMC) += applesmc.o
+obj-m += applesmc.o
 
 KVERSION := $(KERNELRELEASE)
 ifeq ($(origin KERNELRELEASE), undefined)
