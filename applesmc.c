@@ -1473,7 +1473,13 @@ static void applesmc_backlight_set(struct work_struct *work)
 {
 	struct applesmc_device *smc = container_of(work, struct applesmc_device, backlight_work);
 
-	applesmc_write_key(smc, BACKLIGHT_KEY, smc->backlight_state, 2);
+	int ret;
+
+	ret = applesmc_write_key(smc, BACKLIGHT_KEY, smc->backlight_state, 2);
+	if (ret)
+		dev_warn(smc->ldev,
+			 "failed to write backlight state (ret=%d, value=%u)\n",
+			 ret, smc->backlight_state[0]);
 }
 
 static void applesmc_brightness_set(struct led_classdev *led_cdev,
