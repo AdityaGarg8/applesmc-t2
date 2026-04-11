@@ -849,7 +849,11 @@ static int applesmc_init_smcreg_try(struct applesmc_device *smc)
 	s->key_count = count;
 
 	if (!s->cache)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7,0,0)
 		s->cache = kcalloc(s->key_count, sizeof(*s->cache), GFP_KERNEL);
+#else
+		s->cache = kzalloc_objs(*s->cache, s->key_count);
+#endif
 	if (!s->cache)
 		return -ENOMEM;
 
@@ -1689,7 +1693,11 @@ static int applesmc_create_nodes(struct applesmc_device *smc,
 	int ret, i;
 
 	for (grp = groups; grp->format; grp++) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7,0,0)
 		grp->nodes = kcalloc(num + 1, sizeof(*node), GFP_KERNEL);
+#else
+		grp->nodes = kzalloc_objs(*node, num + 1);
+#endif
 		if (!grp->nodes) {
 			ret = -ENOMEM;
 			goto out;
