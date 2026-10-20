@@ -36,6 +36,10 @@
 #include <linux/bits.h>
 #include <linux/version.h>
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+#include <linux/platform_device.h>
+#endif
+
 /* data port used by Apple SMC */
 #define APPLESMC_DATA_PORT	0
 /* command/status port used by Apple SMC */
@@ -152,7 +156,9 @@ struct applesmc_registers {
 };
 
 struct applesmc_device {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7,3,0)
 	struct acpi_device *dev;
+#endif
 	struct device *ldev;
 	struct applesmc_registers reg;
 
@@ -942,7 +948,11 @@ static void applesmc_free_resources(struct applesmc_device *smc);
 static int applesmc_create_modules(struct applesmc_device *smc);
 static void applesmc_destroy_modules(struct applesmc_device *smc);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+static int applesmc_probe(struct platform_device *pdev)
+#else
 static int applesmc_add(struct acpi_device *dev)
+#endif
 {
 	struct applesmc_device *smc;
 	int ret;
@@ -950,11 +960,19 @@ static int applesmc_add(struct acpi_device *dev)
 	smc = kzalloc(sizeof(struct applesmc_device), GFP_KERNEL);
 	if (!smc)
 		return -ENOMEM;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	smc->ldev = &pdev->dev;
+#else
 	smc->dev = dev;
 	smc->ldev = &dev->dev;
+#endif
 	mutex_init(&smc->reg.mutex);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	dev_set_drvdata(&pdev->dev, smc);
+#else
 	dev_set_drvdata(&dev->dev, smc);
+#endif
 
 	ret = applesmc_init_resources(smc);
 	if (ret)
@@ -977,20 +995,30 @@ out_reg:
 out_res:
 	applesmc_free_resources(smc);
 out_mem:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	dev_set_drvdata(&pdev->dev, NULL);
+#else
 	dev_set_drvdata(&dev->dev, NULL);
+#endif
 	mutex_destroy(&smc->reg.mutex);
 	kfree(smc);
 
 	return ret;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+static void applesmc_remove(struct platform_device *pdev)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
 static int applesmc_remove(struct acpi_device *dev)
 #else
 static void applesmc_remove(struct acpi_device *dev)
 #endif
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	struct applesmc_device *smc = dev_get_drvdata(&pdev->dev);
+#else
 	struct applesmc_device *smc = dev_get_drvdata(&dev->dev);
+#endif
 
 	applesmc_destroy_modules(smc);
 	applesmc_destroy_smcreg(smc);
@@ -998,11 +1026,8 @@ static void applesmc_remove(struct acpi_device *dev)
 
 	mutex_destroy(&smc->reg.mutex);
 	kfree(smc);
-
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
 	return 0;
-#else
-	return;
 #endif
 }
 
@@ -1052,8 +1077,13 @@ static int applesmc_init_resources(struct applesmc_device *smc)
 {
 	int ret;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	ret = acpi_walk_resources(ACPI_HANDLE(smc->ldev), METHOD_NAME__CRS,
+			applesmc_walk_resources, smc);
+#else
 	ret = acpi_walk_resources(smc->dev->handle, METHOD_NAME__CRS,
 			applesmc_walk_resources, smc);
+#endif
 	if (ACPI_FAILURE(ret))
 		return -ENXIO;
 
@@ -1139,12 +1169,26 @@ static const struct acpi_device_id applesmc_ids[] = {
 	{"APP0001", 0},
 	{"", 0},
 };
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+MODULE_DEVICE_TABLE(acpi, applesmc_ids);
+#endif
 
 static const struct dev_pm_ops applesmc_pm_ops = {
 	.resume = applesmc_pm_resume,
 	.restore = applesmc_pm_restore,
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+static struct platform_driver applesmc_driver = {
+	.probe = applesmc_probe,
+	.remove = applesmc_remove,
+	.driver = {
+		.name = "applesmc",
+		.acpi_match_table = applesmc_ids,
+		.pm = &applesmc_pm_ops,
+	},
+};
+#else
 static struct acpi_driver applesmc_driver = {
 	.name = "applesmc",
 	.class = "applesmc",
@@ -1160,6 +1204,8 @@ static struct acpi_driver applesmc_driver = {
 	.owner = THIS_MODULE
 #endif
 };
+#endif
+
 
 /*
  * applesmc_calibrate - Set our "resting" values.  Callers must
@@ -1674,8 +1720,13 @@ static void applesmc_destroy_nodes(struct applesmc_device *smc,
 
 	for (grp = groups; grp->nodes; grp++) {
 		for (node = grp->nodes; node->sda.dev_attr.attr.name; node++)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+			sysfs_remove_file(&smc->ldev->kobj,
+					  &node->sda.dev_attr.attr);
+#else
 			sysfs_remove_file(&smc->dev->dev.kobj,
 					  &node->sda.dev_attr.attr);
+#endif
 		kfree(grp->nodes);
 		grp->nodes = NULL;
 	}
@@ -1713,7 +1764,11 @@ static int applesmc_create_nodes(struct applesmc_device *smc,
 			sysfs_attr_init(attr);
 			attr->name = node->name;
 			attr->mode = 0444 | (grp->store ? 0200 : 0);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+			ret = sysfs_create_file(&smc->ldev->kobj, attr);
+#else
 			ret = sysfs_create_file(&smc->dev->dev.kobj, attr);
+#endif
 			if (ret) {
 				attr->name = NULL;
 				goto out;
@@ -1750,7 +1805,11 @@ static int applesmc_create_accelerometer(struct applesmc_device *smc)
 	/* initialize the input device */
 	smc->idev->name = "applesmc";
 	smc->idev->id.bustype = BUS_HOST;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	smc->idev->dev.parent = smc->ldev;
+#else
 	smc->idev->dev.parent = &smc->dev->dev;
+#endif
 	input_set_abs_params(smc->idev, ABS_X,
 			-256, 256, APPLESMC_INPUT_FUZZ, APPLESMC_INPUT_FLAT);
 	input_set_abs_params(smc->idev, ABS_Y,
@@ -1816,7 +1875,11 @@ static int applesmc_create_key_backlight(struct applesmc_device *smc)
 	smc->backlight_dev.name = "smc::kbd_backlight";
 	smc->backlight_dev.default_trigger = "nand-disk";
 	smc->backlight_dev.brightness_set = applesmc_brightness_set;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	ret = led_classdev_register(smc->ldev, &smc->backlight_dev);
+#else
 	ret = led_classdev_register(&smc->dev->dev, &smc->backlight_dev);
+#endif
 	if (ret)
 		destroy_workqueue(smc->backlight_wq);
 
@@ -1907,7 +1970,11 @@ static int applesmc_create_modules(struct applesmc_device *smc)
 	if (ret)
 		goto out_light_sysfs;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	smc->hwmon_dev = hwmon_device_register(smc->ldev);
+#else
 	smc->hwmon_dev = hwmon_device_register(&smc->dev->dev);
+#endif
 	if (IS_ERR(smc->hwmon_dev)) {
 		ret = PTR_ERR(smc->hwmon_dev);
 		goto out_light_ledclass;
@@ -1955,7 +2022,11 @@ static int __init applesmc_init(void)
 		goto out;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	ret = platform_driver_register(&applesmc_driver);
+#else
 	ret = acpi_bus_register_driver(&applesmc_driver);
+#endif
 	if (ret)
 		goto out;
 
@@ -1968,7 +2039,11 @@ out:
 
 static void __exit applesmc_exit(void)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
+	platform_driver_unregister(&applesmc_driver);
+#else
 	acpi_bus_unregister_driver(&applesmc_driver);
+#endif
 }
 
 module_init(applesmc_init);
